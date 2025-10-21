@@ -11,6 +11,11 @@ namespace Game.Domain
         public MongoUserRepository(IMongoDatabase database)
         {
             userCollection = database.GetCollection<UserEntity>(CollectionName);
+            
+            var indexKeysDefinition = Builders<UserEntity>.IndexKeys.Ascending(u => u.Login);
+            var indexOptions = new CreateIndexOptions { Unique = true };
+            var indexModel = new CreateIndexModel<UserEntity>(indexKeysDefinition, indexOptions);
+            userCollection.Indexes.CreateOne(indexModel);
         }
 
         public UserEntity Insert(UserEntity user)
@@ -33,13 +38,29 @@ namespace Game.Domain
 
         public UserEntity GetOrCreateByLogin(string login)
         {
-            var user = userCollection.Find(u => u.Login == login).FirstOrDefault();
-            if (user != null)
-                return user;
+            var filter = Builders<UserEntity>.Filter.Eq(u => u.Login, login);
+            var update = Builders<UserEntity>.Update
+                .SetOnInsert(u => u.Id, Guid.NewGuid())
+                .SetOnInsert(u => u.Login, login)
+                .SetOnInsert(u => u.FirstName, "")
+                .SetOnInsert(u => u.LastName, "")
+                .SetOnInsert(u => u.GamesPlayed, 0)
+                .SetOnInsert(u => u.CurrentGameId, null);
             
-            var newUser = new UserEntity(Guid.NewGuid(), login, "", "", 0, null);
-            userCollection.InsertOne(newUser);
-            return newUser;
+            var options = new FindOneAndUpdateOptions<UserEntity>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After
+            };
+            
+            try
+            {
+                return userCollection.FindOneAndUpdate(filter, update, options);
+            }
+            catch (MongoCommandException ex) when (ex.Code == 11000)
+            {
+                return userCollection.Find(filter).FirstOrDefault();
+            }
         }
 
         public void Update(UserEntity user)
